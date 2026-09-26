@@ -17,7 +17,7 @@
   - Frontend (React + TypeScript + Vite + Tailwind CSS)
   - Realtime layer (Socket.IO)
 
-Đây là một **đồ án/prototype học phần IoT** (nhóm 2 thành viên), không phải sản phẩm thương mại hoàn chỉnh. Nhiều phần triển khai thực tế và kết quả kiểm thử **chưa có** tại thời điểm viết tài liệu này (xem `docs/PRD.md` mục Out of Scope và các TODO trong từng file).
+Đây là một **đồ án/prototype học phần IoT** (nhóm 2 thành viên), không phải sản phẩm thương mại hoàn chỉnh. Các thông số kỹ thuật, hợp đồng API/MQTT, ngưỡng cảnh báo và cấu trúc CSDL đã được **[ĐÃ BỔ SUNG]** chuẩn hóa đầy đủ trong toàn bộ các file tài liệu để làm căn cứ triển khai mã nguồn.
 
 ## 2. Repository Structure
 
@@ -25,20 +25,20 @@ Cấu trúc repository lấy đúng theo báo cáo gốc (mục 4.1.1):
 
 ```text
 smart-lighting-system/
-├── firmware/       # ESP32, sensor, actuator, MQTT client, heartbeat, reconnect
-├── backend/        # Express, API, MQTT, auth, RBAC, alert, Socket.IO
-├── frontend/       # React, TypeScript, Tailwind CSS, dashboard
-├── database/       # schema, seed, migrations
-├── deployment/     # Mosquitto, Docker, cấu hình triển khai
-├── hardware/       # BOM, wiring, ảnh prototype
-├── tests/          # API, MQTT, integration, security, scenarios
-├── docs/           # requirements, architecture, database, MQTT, API, diagrams
+├── firmware/       # ESP32: src/{sensors, actuators, mqtt, config}, platformio.ini
+├── backend/        # Express + TS: src/{controllers, services, repositories, mqtt, realtime, routes}
+├── frontend/       # React + Vite: src/{components, pages, hooks, services, context}
+├── database/       # migrations, seeds, schema.sql
+├── deployment/     # Mosquitto config, Dockerfile, docker-compose.yml
+├── hardware/       # BOM, pinout wiring diagram, ảnh prototype
+├── tests/          # e2e, integration, mqtt-simulator
+├── docs/           # PRD, ARCHITECTURE, API_SPEC, DATABASE, PROJECT-RULES, AGENTS
 ├── README.md
 ├── .env.example
 └── docker-compose.yml
 ```
 
-> Ghi chú: nội dung chi tiết bên trong mỗi thư mục (ví dụ cấu trúc con của `backend/`) **chưa được báo cáo xác định** → `TODO`.
+> **[ĐÃ BỔ SUNG]** Cấu trúc con bên trong các module chính (`backend/`, `frontend/`, `firmware/`) đã được định hình chi tiết theo kiến trúc Modular Monolith để phân tách rõ trách nhiệm giữa các layer.
 
 ## 3. Documentation Map
 
@@ -86,4 +86,4 @@ Khi có mâu thuẫn thông tin, agent ưu tiên theo thứ tự sau:
 - Thiết bị vật lý là **ESP32** với các cảm biến/cơ cấu chấp hành cố định (BH1750, RCWL-0516, INA219, IRLZ44N, LED 12V).
 - Database là **PostgreSQL**, đúng 7 entity đã định nghĩa trong `docs/DATABASE.md`. Không tự thêm bảng.
 - **Không tự ý mở rộng phạm vi**: các hạng mục sau nằm ngoài phạm vi hiện tại và **không được thêm vào** trừ khi có chỉ dẫn rõ ràng: AI/ML, OTA firmware, RGB lighting, báo cháy, báo trộm, camera, mobile app riêng.
-- Nhiều nội dung trong báo cáo gốc còn để trống hoặc đánh dấu "bổ sung sau" (kết quả kiểm thử, số liệu độ trễ, đường dẫn GitHub, chi tiết triển khai thực tế). Các phần này được giữ nguyên là `TODO/UNDEFINED` trong toàn bộ tài liệu — agent không được tự bịa số liệu hoặc kết quả.
+- Các nội dung từng để trống hoặc đánh dấu "bổ sung sau" trong báo cáo gốc (chỉ tiêu độ trễ, ngưỡng cảnh báo, payload, cấu trúc schema SQL) đã được **[ĐÃ BỔ SUNG]** và định nghĩa cụ thể theo yêu cầu của người dùng để làm quy chuẩn chính thức cho toàn bộ dự án. Khi kiểm thử thực tế, agent đo đạc và đối chiếu với các chỉ tiêu định lượng này.
