@@ -189,7 +189,8 @@ Phạm vi hiện tại **không bao gồm** (giữ nguyên theo báo cáo gốc 
 - Adaptive Lighting là chức năng tự động của hệ thống; người dùng không có quyền cấu hình rule trực tiếp trong UC10.
 - Mỗi thiết bị phải có identity riêng (`device_id` và `credential_hash`).
 - Thiết bị offline phải được phát hiện (qua heartbeat timeout) và sinh cảnh báo `DEVICE_OFFLINE`.
-- Cảnh báo `LAMP_FAULT` được tạo khi điều kiện lỗi thỏa mãn: đèn được yêu cầu bật nhưng dòng điện đo được thấp hơn ngưỡng trong một khoảng thời gian xác định (khoảng thời gian cụ thể: UNDEFINED).
+- Cảnh báo `LAMP_FAULT` được tạo khi điều kiện lỗi thỏa mãn: **[ĐÃ BỔ SUNG]** Khi mức PWM yêu cầu $\ge 30\%$ nhưng dòng điện tiêu thụ đo được từ INA219 thấp hơn ngưỡng $I < 0.05\text{A}$ ($50\text{mA}$) duy trì liên tục trong thời gian $T \ge 5\text{ giây}$.
+  - *Lý do/Rationale:* Khi PWM ở mức thấp (0–20% theo bảng Adaptive Lighting khi không có người), dòng tải LED rất nhỏ dễ gây báo động giả (false positive); quy định chỉ kiểm tra lỗi khi $PWM \ge 30\%$ đảm bảo đèn đang trong trạng thái tải sáng rõ rệt. Khoảng thời gian $5\text{s}$ giúp lọc nhiễu và bỏ qua hiện tượng quá độ (transient/inrush) khi vừa bật hoặc chuyển mức độ sáng.
 - Chỉ Admin được: quản lý User, onboarding Device, quản lý vòng đời Device, cấu hình Adaptive Lighting.
 - Admin và Operator đều được: giám sát Device, xem Dashboard, xem lịch sử dữ liệu/hoạt động, điều khiển đèn, xử lý cảnh báo.
 - Viewer chỉ được: đăng nhập/đăng xuất, đổi mật khẩu, giám sát Device, xem Dashboard, xem lịch sử dữ liệu/hoạt động.

@@ -32,72 +32,81 @@ AUDIT_LOG
 
 Với mỗi bảng dưới đây:
 - Cột đầu tiên trong danh sách field là khóa chính (primary key), theo quy ước đặt tên trong báo cáo gốc.
-- **Data type, độ dài, index, cascade behavior, và constraint cụ thể** (NOT NULL, UNIQUE, CHECK...) **không được báo cáo gốc xác định** ở mức chi tiết SQL → đánh dấu `TODO/UNDEFINED` cho từng bảng, cần nhóm bổ sung trước khi viết migration.
+- **Data type, độ dài, index, cascade behavior, và constraint cụ thể:** **[ĐÃ BỔ SUNG]** Đã chuẩn hóa chi tiết cho PostgreSQL 18 để phục vụ trực tiếp việc viết mã nguồn migration CSDL.
+  - **Thang đo PWM:** Thống nhất toàn hệ thống dùng **phần trăm ($0 - 100\%$)**, lưu dưới dạng `SMALLINT CHECK (pwm >= 0 AND pwm <= 100)`. Tầng Firmware ESP32 chịu trách nhiệm ánh xạ (map) từ phần trăm sang giá trị duty cycle thô của timer phần cứng LEDC.
+    - *Lý do/Rationale:* Việc dùng thang đo phần trăm ($0 - 100\%$) giúp thống nhất trực quan với giao diện Web UI, đơn giản hóa việc cấu hình ngưỡng Adaptive Lighting và độc lập hoàn toàn với cấu hình phần cứng (bit resolution) của timer LEDC trên ESP32.
+  - **Chính sách xóa Device & Cascade behavior:** Trong vận hành thực tế, hệ thống **không xóa vật lý (hard delete)** bản ghi trong bảng `DEVICE`, mà chỉ chuyển trạng thái `lifecycle_status = 'DECOMMISSIONED'` (soft-decommission). Để đảm bảo toàn vẹn dữ liệu truy vết:
+    - Bảng `COMMAND` và `ALERT` áp dụng **`ON DELETE RESTRICT`** đối với `device_id` nhằm ngăn chặn tuyệt đối việc xóa nhầm thiết bị khi đã có dữ liệu lịch sử vận hành.
+    - Bảng `TELEMETRY` giữ `ON DELETE CASCADE` đối với `device_id` như một tùy chọn kỹ thuật chỉ dùng khi dọn dẹp dữ liệu đo đạc thử nghiệm trong môi trường phát triển (dev).
+    - *Lý do/Rationale:* Lịch sử lệnh điều khiển và cảnh báo sự cố là dữ liệu phục vụ audit, điều tra nguyên nhân hỏng hóc và trách nhiệm vận hành nên không được phép bị mất khi thiết bị ngừng hoạt động.
 
 ## 4. ROLE
 
 - **Table name:** `ROLE`
 - **Purpose:** Định nghĩa các vai trò trong hệ thống (Admin, Operator, Viewer).
-- **Columns:**
+- **Columns: [ĐÃ BỔ SUNG]**
 
-| Column | Ghi chú |
-|---|---|
-| `role_id` | Primary key |
-| `role_name` | Tên vai trò (Admin/Operator/Viewer) |
-| `description` | Mô tả vai trò |
+| Column | Data Type | Ràng buộc / Mặc định | Ghi chú |
+|---|---|---|---|
+| `role_id` | SERIAL / INT | PRIMARY KEY | Khóa chính |
+| `role_name` | VARCHAR(30) | NOT NULL, UNIQUE, CHECK (role_name IN ('ADMIN', 'OPERATOR', 'VIEWER')) | Tên vai trò |
+| `description` | VARCHAR(255) | NULL | Mô tả vai trò |
 
 - **Primary key:** `role_id`
 - **Foreign keys:** không có
 - **Relationships:** `ROLE → USER` (1:N)
-- **Constraints:** TODO/UNDEFINED (ví dụ: `role_name` có UNIQUE hay không — chưa xác định)
+- **Constraints: [ĐÃ BỔ SUNG]** `UNIQUE(role_name)`, CHECK constraint đúng 3 vai trò: `ADMIN`, `OPERATOR`, `VIEWER`.
+  - *Lý do/Rationale:* Cần thiết để khởi tạo seed dữ liệu ban đầu cho database và ràng buộc phân quyền RBAC ở tầng backend.
 
 ## 5. USER
 
 - **Table name:** `USER`
 - **Purpose:** Lưu thông tin tài khoản người dùng.
-- **Columns:**
+- **Columns: [ĐÃ BỔ SUNG]**
 
-| Column | Ghi chú |
-|---|---|
-| `user_id` | Primary key |
-| `username` | Tên đăng nhập |
-| `email` | Email |
-| `password_hash` | Mật khẩu đã băm (bcryptjs) — không lưu plaintext |
-| `role_id` | Foreign key → `ROLE.role_id` |
-| `status` | Trạng thái tài khoản (khóa/mở — giá trị cụ thể: TODO) |
-| `created_at` | Thời điểm tạo |
-| `updated_at` | Thời điểm cập nhật gần nhất |
+| Column | Data Type | Ràng buộc / Mặc định | Ghi chú |
+|---|---|---|---|
+| `user_id` | UUID | PRIMARY KEY DEFAULT gen_random_uuid() | Khóa chính UUID v4 |
+| `username` | VARCHAR(50) | NOT NULL, UNIQUE | Tên đăng nhập |
+| `email` | VARCHAR(100) | NOT NULL, UNIQUE | Email người dùng |
+| `password_hash` | VARCHAR(255) | NOT NULL | Mật khẩu băm (bcryptjs) |
+| `role_id` | INT | NOT NULL, REFERENCES ROLE(role_id) ON DELETE RESTRICT | Khóa ngoại vai trò |
+| `status` | VARCHAR(20) | NOT NULL DEFAULT 'ACTIVE', CHECK (status IN ('ACTIVE', 'LOCKED', 'INACTIVE')) | Trạng thái tài khoản |
+| `created_at` | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | Thời điểm tạo |
+| `updated_at` | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | Thời điểm cập nhật |
 
 - **Primary key:** `user_id`
-- **Foreign keys:** `role_id` → `ROLE.role_id`
+- **Foreign keys:** `role_id` → `ROLE.role_id` (ON DELETE RESTRICT — không cho phép xóa role khi vẫn còn user gắn với role).
 - **Relationships:** `USER → DEVICE` (1:N, qua `assigned_user_id`), `USER → COMMAND` (1:N), `USER → ALERT` (1:N, qua `acknowledged_by`/`resolved_by`), `USER → AUDIT_LOG` (1:N)
-- **Constraints:** TODO/UNDEFINED (UNIQUE cho `username`/`email`, độ dài `password_hash`, giá trị enum cho `status`... chưa xác định)
+- **Constraints: [ĐÃ BỔ SUNG]** `UNIQUE(username)`, `UNIQUE(email)`, CHECK constraint cho `status`.
+  - *Lý do/Rationale:* Cần thiết để lập trình tầng ORM/Repository và validate dữ liệu khi đăng ký/đăng nhập. Độ dài `password_hash` 255 ký tự đảm bảo lưu trọn vẹn chuỗi băm chuẩn bcrypt.
 
 ## 6. DEVICE
 
 - **Table name:** `DEVICE`
 - **Purpose:** Lưu thông tin và trạng thái từng thiết bị ESP32 trong hệ thống.
-- **Columns:**
+- **Columns: [ĐÃ BỔ SUNG]**
 
-| Column | Ghi chú |
-|---|---|
-| `device_id` | Primary key |
-| `device_name` | Tên thiết bị |
-| `location` | Vị trí lắp đặt |
-| `assigned_user_id` | Foreign key → `USER.user_id` (người phụ trách/gán thiết bị) |
-| `device_status` | Trạng thái hoạt động hiện tại: ONLINE / OFFLINE / FAULT |
-| `lifecycle_status` | Trạng thái vòng đời: REGISTERED / PROVISIONED / ACTIVE / MAINTENANCE / DECOMMISSIONED (xem `ARCHITECTURE.md`) |
-| `firmware_version` | Phiên bản firmware hiện tại |
-| `credential_hash` | Credential/khóa xác thực của thiết bị (đã băm) |
-| `adaptive_config` | Cấu hình Adaptive Lighting (kiểu JSONB) |
-| `last_seen_at` | Thời điểm cuối cùng nhận được tín hiệu từ thiết bị |
-| `created_at` | Thời điểm tạo |
-| `updated_at` | Thời điểm cập nhật gần nhất |
+| Column | Data Type | Ràng buộc / Mặc định | Ghi chú |
+|---|---|---|---|
+| `device_id` | VARCHAR(50) | PRIMARY KEY | Khóa chính mã thiết bị (ví dụ: `LIGHT-001`) |
+| `device_name` | VARCHAR(100) | NOT NULL | Tên gợi nhớ của thiết bị |
+| `location` | VARCHAR(150) | NULL | Vị trí lắp đặt (ví dụ: Phòng khách) |
+| `assigned_user_id` | UUID | NULL, REFERENCES USER(user_id) ON DELETE SET NULL | Người phụ trách gán thiết bị |
+| `device_status` | VARCHAR(20) | NOT NULL DEFAULT 'OFFLINE', CHECK (device_status IN ('ONLINE', 'OFFLINE', 'FAULT')) | Trạng thái kết nối/hoạt động |
+| `lifecycle_status` | VARCHAR(20) | NOT NULL DEFAULT 'REGISTERED', CHECK (lifecycle_status IN ('REGISTERED', 'PROVISIONED', 'ACTIVE', 'MAINTENANCE', 'DECOMMISSIONED')) | Trạng thái vòng đời thiết bị |
+| `firmware_version` | VARCHAR(30) | NOT NULL DEFAULT '1.0.0' | Phiên bản firmware hiện tại |
+| `credential_hash` | VARCHAR(255) | NOT NULL | Khóa nhận thực thiết bị (băm SHA256/bcrypt) |
+| `adaptive_config` | JSONB | NOT NULL DEFAULT '{"enabled": true, "motion_timeout_sec": 30, "lux_thresholds": [{"min_lux": 400, "pwm": 30}, {"min_lux": 200, "pwm": 50}, {"min_lux": 100, "pwm": 70}, {"min_lux": 0, "pwm": 100}], "no_motion_pwm": 10}'::jsonb | Cấu hình Adaptive Lighting |
+| `last_seen_at` | TIMESTAMPTZ | NULL | Thời điểm cuối cùng nhận tín hiệu |
+| `created_at` | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | Thời điểm tạo |
+| `updated_at` | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | Thời điểm cập nhật |
 
 - **Primary key:** `device_id`
-- **Foreign keys:** `assigned_user_id` → `USER.user_id`
+- **Foreign keys:** `assigned_user_id` → `USER.user_id` (ON DELETE SET NULL — khi tài khoản người dùng bị xóa, thiết bị vẫn giữ nguyên).
 - **Relationships:** `DEVICE → TELEMETRY` (1:N), `DEVICE → COMMAND` (1:N), `DEVICE → ALERT` (1:N), `DEVICE → AUDIT_LOG` (1:N)
-- **Constraints:** TODO/UNDEFINED (`device_status`/`lifecycle_status` nên là enum/CHECK constraint theo danh sách giá trị đã biết, nhưng báo cáo chưa xác nhận cơ chế ràng buộc cụ thể ở tầng DB)
+- **Constraints: [ĐÃ BỔ SUNG]** CHECK constraint cho `device_status` ('ONLINE', 'OFFLINE', 'FAULT') và `lifecycle_status` ('REGISTERED', 'PROVISIONED', 'ACTIVE', 'MAINTENANCE', 'DECOMMISSIONED').
+  - *Lý do/Rationale:* Cần thiết để code API Onboarding và Lifecycle state machine. `device_status` và `lifecycle_status` là 2 trạng thái độc lập phản ánh khía cạnh kỹ thuật thời gian thực và quản trị vòng đời thiết bị.
 
 > Ghi chú quan trọng: `device_status` (ONLINE/OFFLINE/FAULT) và `lifecycle_status` (REGISTERED/PROVISIONED/ACTIVE/MAINTENANCE/DECOMMISSIONED) là **hai trường độc lập**, không được gộp chung hay nhầm lẫn.
 
@@ -105,88 +114,97 @@ Với mỗi bảng dưới đây:
 
 - **Table name:** `TELEMETRY`
 - **Purpose:** Lưu dữ liệu cảm biến gửi định kỳ từ thiết bị.
-- **Columns:**
+- **Columns: [ĐÃ BỔ SUNG]**
 
-| Column | Ghi chú |
-|---|---|
-| `telemetry_id` | Primary key |
-| `device_id` | Foreign key → `DEVICE.device_id` |
-| `timestamp` | Thời điểm ghi nhận dữ liệu |
-| `lux` | Cường độ ánh sáng |
-| `motion` | Có/không phát hiện chuyển động |
-| `voltage` | Điện áp |
-| `current` | Dòng điện |
-| `power` | Công suất |
-| `pwm` | Giá trị PWM tại thời điểm ghi nhận |
+| Column | Data Type | Ràng buộc / Mặc định | Ghi chú |
+|---|---|---|---|
+| `telemetry_id` | BIGSERIAL | PRIMARY KEY | Khóa chính tăng tự động |
+| `device_id` | VARCHAR(50) | NOT NULL, REFERENCES DEVICE(device_id) ON DELETE CASCADE | Thiết bị đo |
+| `timestamp` | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | Thời điểm đo đạc |
+| `lux` | NUMERIC(8,2) | NOT NULL | Cường độ ánh sáng (Lux) |
+| `motion` | BOOLEAN | NOT NULL DEFAULT FALSE | Trạng thái chuyển động |
+| `voltage` | NUMERIC(6,2) | NOT NULL | Điện áp đo được (V) |
+| `current` | NUMERIC(6,3) | NOT NULL | Dòng điện tiêu thụ (A) |
+| `power` | NUMERIC(7,3) | NOT NULL | Công suất tiêu thụ (W) |
+| `pwm` | SMALLINT | NOT NULL, CHECK (pwm >= 0 AND pwm <= 100) | Thang đo phần trăm PWM (0–100%) |
 
 - **Primary key:** `telemetry_id`
-- **Foreign keys:** `device_id` → `DEVICE.device_id`
+- **Foreign keys:** `device_id` → `DEVICE.device_id` (ON DELETE CASCADE — chỉ áp dụng khi xóa dữ liệu test trong môi trường dev).
 - **Relationships:** thuộc về 1 `DEVICE`
-- **Constraints:** TODO/UNDEFINED (index theo `device_id` + `timestamp` để truy vấn lịch sử hiệu quả — hợp lý về mặt kỹ thuật nhưng chưa được báo cáo xác nhận, cần nhóm quyết định)
+- **Constraints & Indexes: [ĐÃ BỔ SUNG]** CHECK constraint `pwm BETWEEN 0 AND 100`. Index tăng tốc truy vấn lịch sử: `CREATE INDEX idx_telemetry_device_timestamp ON TELEMETRY (device_id, timestamp DESC);`.
+  - *Lý do/Rationale:* Thang đo PWM phần trăm (0–100%) đồng nhất với Web UI và Adaptive rule; Index kép `(device_id, timestamp DESC)` bắt buộc phải có để truy vấn biểu đồ thời gian thực không bị chậm khi số lượng bản ghi telemetry tăng nhanh (mỗi 5s một bản tin).
 
 ## 8. COMMAND
 
 - **Table name:** `COMMAND`
 - **Purpose:** Lưu lệnh điều khiển gửi tới thiết bị và kết quả thực thi.
-- **Columns:**
+- **Columns: [ĐÃ BỔ SUNG]**
 
-| Column | Ghi chú |
-|---|---|
-| `command_id` | Primary key |
-| `device_id` | Foreign key → `DEVICE.device_id` |
-| `user_id` | Foreign key → `USER.user_id` (người gửi lệnh) |
-| `command_type` | Loại lệnh (ví dụ: PWM...) |
-| `command_value` | Giá trị đi kèm |
-| `status` | Trạng thái lệnh (ví dụ ACKNOWLEDGED — danh sách đầy đủ: TODO) |
-| `sent_at` | Thời điểm gửi lệnh |
-| `ack_at` | Thời điểm nhận ACK |
-| `result` | Kết quả thực thi |
+| Column | Data Type | Ràng buộc / Mặc định | Ghi chú |
+|---|---|---|---|
+| `command_id` | UUID | PRIMARY KEY DEFAULT gen_random_uuid() | Khóa chính UUID |
+| `device_id` | VARCHAR(50) | NOT NULL, REFERENCES DEVICE(device_id) ON DELETE RESTRICT | Thiết bị nhận lệnh |
+| `user_id` | UUID | NULL, REFERENCES USER(user_id) ON DELETE SET NULL | Người gửi lệnh |
+| `command_type` | VARCHAR(20) | NOT NULL, CHECK (command_type IN ('PWM', 'ON', 'OFF')) | Loại lệnh |
+| `command_value` | NUMERIC(5,2) | NULL | Giá trị đính kèm (PWM 0–100%) |
+| `status` | VARCHAR(25) | NOT NULL DEFAULT 'PENDING', CHECK (status IN ('PENDING', 'SENT', 'ACKNOWLEDGED', 'TIMEOUT', 'FAILED')) | Trạng thái lệnh |
+| `sent_at` | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | Thời điểm gửi lệnh |
+| `ack_at` | TIMESTAMPTZ | NULL | Thời điểm nhận ACK |
+| `result` | VARCHAR(50) | NULL | Kết quả thực thi |
 
 - **Primary key:** `command_id`
-- **Foreign keys:** `device_id` → `DEVICE.device_id`, `user_id` → `USER.user_id`
+- **Foreign keys:** `device_id` → `DEVICE.device_id` (**ON DELETE RESTRICT** — ngăn chặn việc xóa cứng thiết bị khi đã có lệnh điều khiển trong quá khứ); `user_id` → `USER.user_id` (ON DELETE SET NULL).
 - **Relationships:** thuộc về 1 `DEVICE` và 1 `USER`
-- **Constraints:** TODO/UNDEFINED
+- **Constraints & Indexes: [ĐÃ BỔ SUNG]** CHECK ràng buộc `command_type` ('PWM', 'ON', 'OFF'), `status` ('PENDING', 'SENT', 'ACKNOWLEDGED', 'TIMEOUT', 'FAILED'). Index: `CREATE INDEX idx_command_device ON COMMAND (device_id, sent_at DESC);`.
+  - *Lý do/Rationale:* Ràng buộc `ON DELETE RESTRICT` bảo vệ dữ liệu audit của hệ thống, cấm xóa cứng thiết bị khi đã vận hành; Index phục vụ API tra cứu lịch sử command của thiết bị.
 
 ## 9. ALERT
 
 - **Table name:** `ALERT`
 - **Purpose:** Lưu cảnh báo phát sinh trong hệ thống (ví dụ LAMP_FAULT, DEVICE_OFFLINE).
-- **Columns:**
+- **Columns: [ĐÃ BỔ SUNG]**
 
-| Column | Ghi chú |
-|---|---|
-| `alert_id` | Primary key |
-| `device_id` | Foreign key → `DEVICE.device_id` |
-| `alert_type` | Loại cảnh báo (ví dụ: LAMP_FAULT, DEVICE_OFFLINE) |
-| `severity` | Mức độ nghiêm trọng (giá trị cụ thể: TODO) |
-| `message` | Nội dung cảnh báo |
-| `status` | Trạng thái xử lý cảnh báo (giá trị cụ thể: TODO) |
-| `created_at` | Thời điểm tạo cảnh báo |
-| `acknowledged_at` | Thời điểm được xác nhận |
-| `resolved_at` | Thời điểm được giải quyết |
-| `acknowledged_by` | Foreign key → `USER.user_id` |
-| `resolved_by` | Foreign key → `USER.user_id` |
+| Column | Data Type | Ràng buộc / Mặc định | Ghi chú |
+|---|---|---|---|
+| `alert_id` | UUID | PRIMARY KEY DEFAULT gen_random_uuid() | Khóa chính UUID |
+| `device_id` | VARCHAR(50) | NOT NULL, REFERENCES DEVICE(device_id) ON DELETE RESTRICT | Thiết bị phát sinh cảnh báo |
+| `alert_type` | VARCHAR(30) | NOT NULL, CHECK (alert_type IN ('LAMP_FAULT', 'DEVICE_OFFLINE', 'SENSOR_ERROR')) | Loại cảnh báo |
+| `severity` | VARCHAR(20) | NOT NULL DEFAULT 'MEDIUM', CHECK (severity IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')) | Mức độ nghiêm trọng |
+| `message` | TEXT | NOT NULL | Nội dung cảnh báo |
+| `status` | VARCHAR(20) | NOT NULL DEFAULT 'NEW', CHECK (status IN ('NEW', 'ACKNOWLEDGED', 'RESOLVED')) | Trạng thái xử lý |
+| `created_at` | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | Thời điểm tạo cảnh báo |
+| `acknowledged_at` | TIMESTAMPTZ | NULL | Thời điểm xác nhận |
+| `resolved_at` | TIMESTAMPTZ | NULL | Thời điểm giải quyết |
+| `acknowledged_by` | UUID | NULL, REFERENCES USER(user_id) ON DELETE SET NULL | Người xác nhận |
+| `resolved_by` | UUID | NULL, REFERENCES USER(user_id) ON DELETE SET NULL | Người giải quyết |
 
 - **Primary key:** `alert_id`
-- **Foreign keys:** `device_id` → `DEVICE.device_id`; `acknowledged_by` → `USER.user_id`; `resolved_by` → `USER.user_id`
+- **Foreign keys:** `device_id` → `DEVICE.device_id` (**ON DELETE RESTRICT** — ngăn xóa cứng thiết bị khi còn cảnh báo); `acknowledged_by` → `USER.user_id` (ON DELETE SET NULL); `resolved_by` → `USER.user_id` (ON DELETE SET NULL).
 - **Relationships:** thuộc về 1 `DEVICE`; liên kết tới `USER` qua `acknowledged_by`/`resolved_by` (1:N mỗi chiều)
-- **Constraints:** TODO/UNDEFINED (danh sách giá trị hợp lệ của `alert_type`, `severity`, `status` chưa được báo cáo liệt kê đầy đủ)
+- **Constraints & Indexes: [ĐÃ BỔ SUNG]** CHECK ràng buộc `alert_type`, `severity`, `status`. Index: `CREATE INDEX idx_alert_status ON ALERT (status);`.
+  - *Lý do/Rationale:* Ràng buộc `ON DELETE RESTRICT` giữ lại toàn vẹn hồ sơ cảnh báo sự cố kỹ thuật; Index theo `status` giúp tối ưu truy vấn danh sách cảnh báo chưa xử lý trên Dashboard.
 
 ## 10. AUDIT_LOG
 
 - **Table name:** `AUDIT_LOG`
 - **Purpose:** Ghi lại các thao tác quan trọng trong hệ thống phục vụ truy vết.
-- **Columns:**
+- **Columns: [ĐÃ BỔ SUNG]**
 
-| Column | Ghi chú |
-|---|---|
-| `log_id` | Primary key |
-| `user_id` | Foreign key → `USER.user_id` |
-| `device_id` | Foreign key → `DEVICE.device_id` (nếu liên quan tới thiết bị) |
-| `action` | Hành động được thực hiện |
-| `description` | Mô tả chi tiết |
-| `ip_address` | Địa chỉ IP thực hiện hành động |
-| `created_at` | Thời điểm ghi log |
+| Column | Data Type | Ràng buộc / Mặc định | Ghi chú |
+|---|---|---|---|
+| `log_id` | BIGSERIAL | PRIMARY KEY | Khóa chính tăng tự động |
+| `user_id` | UUID | NULL, REFERENCES USER(user_id) ON DELETE SET NULL | Người thực hiện hành động |
+| `device_id` | VARCHAR(50) | NULL, REFERENCES DEVICE(device_id) ON DELETE SET NULL | Thiết bị liên quan (nếu có) |
+| `action` | VARCHAR(50) | NOT NULL | Mã hành động |
+| `description` | TEXT | NULL | Mô tả chi tiết hành động |
+| `ip_address` | VARCHAR(45) | NULL | Địa chỉ IP (hỗ trợ IPv4/IPv6) |
+| `created_at` | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | Thời điểm ghi log |
+
+- **Primary key:** `log_id`
+- **Foreign keys:** `user_id` → `USER.user_id` (ON DELETE SET NULL); `device_id` → `DEVICE.device_id` (ON DELETE SET NULL).
+- **Relationships:** thuộc về 1 `USER` và (tùy chọn) 1 `DEVICE`
+- **Constraints & Indexes: [ĐÃ BỔ SUNG]** `device_id` và `user_id` là optional (cho phép NULL để phục vụ thao tác hệ thống hoặc khi user/device bị xoá nhưng audit log vẫn được bảo lưu). Index: `CREATE INDEX idx_audit_created_at ON AUDIT_LOG (created_at DESC);`.
+  - *Lý do/Rationale:* Thiết kế khóa ngoại `ON DELETE SET NULL` là nguyên tắc bắt buộc cho bảng Audit để không bao giờ bị mất dấu vết thao tác lịch sử.
 
 - **Primary key:** `log_id`
 - **Foreign keys:** `user_id` → `USER.user_id`; `device_id` → `DEVICE.device_id`
@@ -296,4 +314,4 @@ erDiagram
     }
 ```
 
-> Không tự thêm bảng ngoài 7 entity trên. Data type SQL cụ thể, index, cascade behavior (ON DELETE/ON UPDATE) và các constraint chi tiết đều **chưa được báo cáo gốc xác định** — mỗi mục trong bảng này đã được đánh dấu `TODO/UNDEFINED` tương ứng, cần nhóm bổ sung khi thiết kế migration thực tế.
+> **[ĐÃ BỔ SUNG]** Toàn bộ data type SQL cụ thể, thang đo PWM ($0 - 100\%$), index hiệu năng, cascade behavior (`ON DELETE RESTRICT` cho `COMMAND`/`ALERT` để bảo vệ dữ liệu audit, `ON DELETE SET NULL` cho User, soft-delete qua `DECOMMISSIONED` cho Device) và các ràng buộc (CHECK, NOT NULL, UNIQUE) của 7 bảng đã được chuẩn hóa chi tiết ở trên để sẵn sàng viết file migration cho PostgreSQL 18. Không tự ý thêm bất kỳ bảng nào ngoài 7 entity này.

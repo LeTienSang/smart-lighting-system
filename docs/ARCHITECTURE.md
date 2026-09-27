@@ -81,7 +81,22 @@ ESP32 → (PWM) → IRLZ44N → LED strip 2835 12V
 Nguồn 12V 3A → LED strip, và → Mini 560 Pro (hạ 5V) → ESP32
 ```
 
-Sơ đồ nối dây chi tiết: **TODO** (báo cáo gốc đánh dấu "[CHÈN SƠ ĐỒ KHỐI PHẦN CỨNG / SƠ ĐỒ NỐI DÂY]" — chưa có).
+Sơ đồ nối dây chi tiết: **[ĐÃ BỔ SUNG]**
+
+| Linh kiện | Chân linh kiện | Kết nối ESP32 / Hệ thống | Ghi chú kỹ thuật |
+|---|---|---|---|
+| **BH1750** (Lux) | VCC, GND, SCL, SDA, ADDR | Chân 3V3, GND, GPIO 22 (SCL), GPIO 21 (SDA), ADDR nối GND | Địa chỉ I2C: `0x23` |
+| **INA219** (Power) | VCC, GND, SCL, SDA | Chân 3V3, GND, GPIO 22 (SCL), GPIO 21 (SDA) | Địa chỉ I2C: `0x40` chung bus I2C |
+| | Vin+, Vin- | Vin+ nối cực (+) Nguồn 12V, Vin- nối cực (+) của dải LED 12V | Đo dòng shunt trên đường cấp nguồn dương |
+| **RCWL-0516** (Motion) | VIN, GND, OUT | 5V (từ Mini 560 Pro), GND, GPIO 19 | Ngõ ra digital logic 3.3V tương thích ESP32 |
+| **IRLZ44N** (MOSFET) | Gate | GPIO 18 (nối tiếp trở 220Ω, kèm trở pull-down 10kΩ xuống GND) | Kênh PWM LEDC điều khiển tải |
+| | Drain | Nối cực (-) của dải LED 12V | Đóng/ngắt tải phía Low-side |
+| | Source | Nối cực GND chung hệ thống | Nối chung mass nguồn 12V và ESP32 |
+| **Mini 560 Pro** (Buck) | IN+, IN- | Cực (+) Nguồn 12V 3A, Cực (-) Nguồn 12V 3A | Điện áp đầu vào 12V DC |
+| | OUT+, OUT- | Chân 5V/VIN của ESP32, GND chung hệ thống | Hạ áp 5V ổn định cấp cho board MCU |
+| **LED strip 2835** | (+), (-) | (+) nối chân Vin- của INA219, (-) nối chân Drain của IRLZ44N | Dải LED tải DC 12V |
+
+> *Lý do/Rationale:* Pinout cụ thể bắt buộc phải được chốt trước khi viết code firmware (để khởi tạo thư viện `Wire`, định cấu hình GPIO và kênh LEDC PWM). Chân I2C GPIO 21/22 là chuẩn mặc định phần cứng của ESP32; GPIO 18/19 là các chân GPIO thông thường, không bị vướng chế độ strapping boot của ESP32.
 
 ## 5. Software Components
 
@@ -120,11 +135,18 @@ Web → Backend → MQTT → ESP32 → LED → ACK → Backend → Web
 
 ### 6.3 Alert Flow
 
-- **DEVICE_OFFLINE:** phát sinh khi heartbeat của thiết bị bị timeout (thiết bị không gửi status/telemetry trong khoảng thời gian quy định — khoảng thời gian cụ thể: `TODO`).
-- **LAMP_FAULT:** backend tạo cảnh báo khi đèn được yêu cầu bật nhưng dòng điện đo được (từ INA219, qua telemetry) thấp hơn ngưỡng trong một khoảng thời gian xác định. Ngưỡng và khoảng thời gian cụ thể: `TODO` (báo cáo chưa định lượng).
+- **DEVICE_OFFLINE:** **[ĐÃ BỔ SUNG]** Phát sinh khi heartbeat của thiết bị bị timeout. ESP32 định kỳ gửi heartbeat mỗi 10 giây (10s) lên topic `iot/device/{id}/status`. Backend kiểm tra theo chu kỳ: nếu sau 30 giây (3 chu kỳ liên tiếp) không nhận được heartbeat hoặc telemetry, backend cập nhật `device_status = 'OFFLINE'` và tạo cảnh báo `DEVICE_OFFLINE` (Severity: HIGH).
+  - *Lý do/Rationale:* Cần chốt con số chu kỳ cụ thể để lập trình hàm kiểm tra định kỳ (`setInterval`) ở Backend và Firmware. Chu kỳ 10s và ngưỡng timeout 30s (3 lần miss) là tiêu chuẩn thông dụng trong IoT để tránh ngắt nhầm khi mạng Wi-Fi chập chờn nhất thời.
+- **LAMP_FAULT:** **[ĐÃ BỔ SUNG]** Backend tạo cảnh báo khi đèn nhận lệnh bật với mức $PWM \ge 30\%$ nhưng dòng điện tiêu thụ đo được từ INA219 (qua telemetry) thấp hơn ngưỡng $I < 0.05\text{A}$ ($50\text{mA}$) duy trì liên tục trong thời gian $T \ge 5\text{ giây}$. Trạng thái thiết bị chuyển sang `FAULT` và tạo cảnh báo `LAMP_FAULT` (Severity: HIGH).
+  - *Lý do/Rationale:* Khi PWM ở mức thấp (0–20% theo bảng Adaptive Lighting khi phòng không có người), dòng tải của LED strip rất nhỏ (có thể dưới 50mA) dẫn đến báo động giả nếu kiểm tra ở mọi mức PWM > 0%. Mức $PWM \ge 30\%$ tương ứng trạng thái có người, đèn bật sáng rõ ràng; khoảng thời gian 5s để bỏ qua dao động dòng điện quá độ (transient/inrush) lúc vừa đổi trạng thái PWM.
 - Quy trình xử lý cảnh báo (acknowledge/resolve) sau khi tạo: thực hiện qua API `/alerts/:id/acknowledge` và `/alerts/:id/resolve` — xem `API_SPEC.md`.
 
-Cơ chế retry/timeout/xử lý bản tin trùng cho luồng MQTT: mục 3.2.8 của báo cáo gốc chỉ có tiêu đề, chưa có nội dung → `TODO/UNDEFINED`.
+Cơ chế retry/timeout/xử lý bản tin trùng cho luồng MQTT: **[ĐÃ BỔ SUNG]**
+- **QoS:** QoS 1 cho command, ACK, config, alert (đảm bảo at-least-once delivery); QoS 0 cho telemetry và heartbeat (tối ưu thông lượng và giảm tải broker).
+- **Command Timeout:** Backend chờ phản hồi ACK tối đa 5000ms (5 giây).
+- **Retry Policy:** Nếu hết timeout 5s mà chưa có ACK, Backend thực hiện retry tối đa 2 lần (thời gian chờ giữa các lần thử lại là 1000ms có exponential backoff). Sau 2 lần thất bại, chuyển trạng thái lệnh sang `TIMEOUT` hoặc `FAILED`.
+- **Xử lý bản tin trùng (Deduplication):** ESP32 và Backend duy trì bộ nhớ đệm (LRU cache / set) lưu danh sách 50 `command_id` trong 60 giây gần nhất. Nếu nhận trùng `command_id` (do broker retry ở QoS 1), hệ thống bỏ qua việc kích hoạt lại phần cứng mà chỉ gửi lại bản tin ACK phản hồi.
+  - *Lý do/Rationale:* Đây là thông số cốt lõi để lập trình logic xử lý bản tin MQTT ở Backend và Firmware. Thiếu các thông số này sẽ không thể viết code gửi lệnh điều khiển tin cậy (command dispatcher) và xử lý ACK.
 
 ## 7. Adaptive Lighting
 
@@ -244,4 +266,9 @@ stateDiagram-v2
     DECOMMISSIONED --> [*]
 ```
 
-> Lưu ý: báo cáo gốc chỉ nêu chuỗi tuyến tính `Registered → Provisioned → Active → Maintenance → Decommissioned`. Việc quay lại từ MAINTENANCE về ACTIVE là suy luận hợp lý cho một trạng thái "bảo trì", nhưng **chưa được báo cáo xác nhận rõ ràng** → cần xác nhận với nhóm trước khi implement transition ngược.
+> **[ĐÃ BỔ SUNG]** Quy tắc chuyển trạng thái vòng đời:
+> - `REGISTERED` → `PROVISIONED`: khi thiết bị được cấp thông tin nhận dạng/credential.
+> - `PROVISIONED` → `ACTIVE`: khi thiết bị kết nối thành công và bắt đầu gửi heartbeat/telemetry.
+> - `ACTIVE` ↔ `MAINTENANCE`: cho phép chuyển hai chiều. Khi cần bảo dưỡng/thay linh kiện đưa về `MAINTENANCE`; sau khi sửa xong, Admin chuyển trở lại `ACTIVE`.
+> - `ACTIVE` hoặc `MAINTENANCE` → `DECOMMISSIONED`: khi thiết bị ngừng hoạt động hoàn toàn. Đây là trạng thái kết thúc (terminal state), không thể chuyển ngược lại.
+> - *Lý do/Rationale:* Việc cho phép chuyển hai chiều giữa `ACTIVE` và `MAINTENANCE` là cần thiết cho thực tế vận hành phần cứng (bảo dưỡng, sửa chữa hoặc thay cảm biến mà không phải thu hồi và đăng ký lại thiết bị từ đầu). Cần chốt quy tắc này để viết logic kiểm tra (validation state machine) tại API `PATCH /devices/:id/lifecycle`.

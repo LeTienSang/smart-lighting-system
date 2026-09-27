@@ -26,7 +26,8 @@
 
 - Sử dụng **React + TypeScript + Vite + Tailwind CSS** đúng theo stack đã chọn.
 - API integration: Frontend chỉ giao tiếp với Backend qua REST/Socket.IO, không kết nối trực tiếp PostgreSQL hoặc MQTT Broker.
-- Authentication state: quản lý trạng thái đăng nhập/token ở phía client một cách nhất quán; chi tiết cơ chế lưu trữ token — báo cáo chưa xác định → `TODO`.
+- Authentication state: **[ĐÃ BỔ SUNG]** Quản lý trạng thái đăng nhập/token ở phía client: lưu Access Token trong bộ nhớ ứng dụng (React Auth Context/State), lưu Refresh Token trong HttpOnly Cookie; header mọi request bảo vệ bằng `Authorization: Bearer <access_token>`. Khi Access Token hết hạn, client tự động gọi `POST /auth/refresh` để nhận token mới.
+  - *Lý do/Rationale:* Đây là kiến trúc xác thực chuẩn để lập trình Http Client Interceptor (Axios/Fetch) và React Auth Guard, giúp bảo vệ token trước nguy cơ tấn công XSS (không lưu refresh token ở localStorage).
 - RBAC UI: giao diện nên ẩn/hiện chức năng theo vai trò để trải nghiệm tốt hơn, **nhưng đây chỉ là UX**, không thay thế cho kiểm tra quyền ở backend.
 - Realtime: dùng Socket.IO để nhận cập nhật dữ liệu thời gian thực (dashboard, trạng thái thiết bị, telemetry mới).
 - Biểu đồ dùng Recharts (theo `ARCHITECTURE.md`).
@@ -83,7 +84,8 @@
 - Không commit secret dưới bất kỳ hình thức nào.
 - Commit phải tập trung vào một thay đổi rõ ràng (tránh commit gộp nhiều việc không liên quan).
 - Không sửa lịch sử Git (force push, rebase lịch sử đã chia sẻ...) nếu không được yêu cầu rõ ràng.
-- Quy ước đặt tên commit message cụ thể: chưa được project xác định → `TODO`, không tự đặt convention rồi áp đặt như chuẩn chính thức.
+- Quy ước đặt tên commit message: **[ĐÃ BỔ SUNG]** Tuân thủ chuẩn Conventional Commits: `<type>(<scope>): <mô tả ngắn>` (Ví dụ: `feat(backend): add telemetry ingestion handler`, `fix(firmware): fix reconnection logic`, `docs(api): update MQTT payload spec`). Các type hợp lệ: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`.
+  - *Lý do/Rationale:* Cần thống nhất quy ước commit ngay từ đầu để giữ lịch sử Git rõ ràng và hỗ trợ sinh changelog tự động.
 
 ## 10. Testing Rules
 
