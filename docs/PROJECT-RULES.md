@@ -63,7 +63,7 @@
 - Topic phải tuân thủ đúng danh sách trong `API_SPEC.md` Phần B.1.
 - Payload phải tuân thủ đúng contract trong `API_SPEC.md` Phần B.3–B.5.
 - Không tự ý đổi topic hoặc payload structure.
-- QoS, retain, expiry, retry, timeout: các thông số này **chưa được xác định** trong tài liệu gốc — nếu cần implement, phải hỏi lại hoặc đề xuất rõ ràng, không tự chọn giá trị rồi coi là chuẩn chính thức.
+- QoS, retain, message expiry, retry, timeout, deduplication: các thông số vận hành này đã được chuẩn hóa tại `ARCHITECTURE.md` mục 6.3 và `API_SPEC.md` mục B.6 (đánh dấu `[ĐÃ BỔ SUNG]`, kèm rationale) — implement đúng theo các giá trị đó. Đây là **giá trị đề xuất ban đầu của nhóm để có thể bắt đầu code**, chưa qua đo đạc/hiệu chỉnh thực tế trên phần cứng; nếu cần thay đổi các con số này, phải cập nhật lại đồng thời cả hai file trên, không tự ý đổi rải rác.
 
 ## 8. Security Rules
 

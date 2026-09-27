@@ -36,9 +36,9 @@ Với mỗi bảng dưới đây:
   - **Thang đo PWM:** Thống nhất toàn hệ thống dùng **phần trăm ($0 - 100\%$)**, lưu dưới dạng `SMALLINT CHECK (pwm >= 0 AND pwm <= 100)`. Tầng Firmware ESP32 chịu trách nhiệm ánh xạ (map) từ phần trăm sang giá trị duty cycle thô của timer phần cứng LEDC.
     - *Lý do/Rationale:* Việc dùng thang đo phần trăm ($0 - 100\%$) giúp thống nhất trực quan với giao diện Web UI, đơn giản hóa việc cấu hình ngưỡng Adaptive Lighting và độc lập hoàn toàn với cấu hình phần cứng (bit resolution) của timer LEDC trên ESP32.
   - **Chính sách xóa Device & Cascade behavior:** Trong vận hành thực tế, hệ thống **không xóa vật lý (hard delete)** bản ghi trong bảng `DEVICE`, mà chỉ chuyển trạng thái `lifecycle_status = 'DECOMMISSIONED'` (soft-decommission). Để đảm bảo toàn vẹn dữ liệu truy vết:
-    - Bảng `COMMAND` và `ALERT` áp dụng **`ON DELETE RESTRICT`** đối với `device_id` nhằm ngăn chặn tuyệt đối việc xóa nhầm thiết bị khi đã có dữ liệu lịch sử vận hành.
-    - Bảng `TELEMETRY` giữ `ON DELETE CASCADE` đối với `device_id` như một tùy chọn kỹ thuật chỉ dùng khi dọn dẹp dữ liệu đo đạc thử nghiệm trong môi trường phát triển (dev).
-    - *Lý do/Rationale:* Lịch sử lệnh điều khiển và cảnh báo sự cố là dữ liệu phục vụ audit, điều tra nguyên nhân hỏng hóc và trách nhiệm vận hành nên không được phép bị mất khi thiết bị ngừng hoạt động.
+    - Cả ba bảng `TELEMETRY`, `COMMAND` và `ALERT` đều áp dụng **`ON DELETE RESTRICT`** đối với `device_id` — một chính sách duy nhất, nhất quán: không cho phép hard-delete Device khi còn bất kỳ dữ liệu lịch sử vận hành nào (kể cả telemetry). Đây là **chủ đích thiết kế**, không phải hạn chế phát sinh ngoài ý muốn — telemetry cũng cần thiết để tra soát lại điều kiện tại thời điểm phát sinh một `LAMP_FAULT` hay `DEVICE_OFFLINE`, nên không có lý do kỹ thuật để bảo vệ TELEMETRY ở mức thấp hơn COMMAND/ALERT.
+    - Dọn dẹp dữ liệu test/dev (nếu cần) không dựa vào cascade ngầm định, mà thực hiện bằng thao tác tường minh, đúng thứ tự: xóa các bản ghi `TELEMETRY` theo `device_id` trước, sau đó mới xóa/đổi trạng thái `DEVICE`. Việc này giữ cho thao tác dọn dữ liệu luôn có chủ đích và dễ audit lại.
+    - *Lý do/Rationale:* Lịch sử telemetry, lệnh điều khiển và cảnh báo sự cố đều là dữ liệu phục vụ audit, điều tra nguyên nhân hỏng hóc và trách nhiệm vận hành, nên không được phép bị mất khi thiết bị ngừng hoạt động.
 
 ## 4. ROLE
 
@@ -119,7 +119,7 @@ Với mỗi bảng dưới đây:
 | Column | Data Type | Ràng buộc / Mặc định | Ghi chú |
 |---|---|---|---|
 | `telemetry_id` | BIGSERIAL | PRIMARY KEY | Khóa chính tăng tự động |
-| `device_id` | VARCHAR(50) | NOT NULL, REFERENCES DEVICE(device_id) ON DELETE CASCADE | Thiết bị đo |
+| `device_id` | VARCHAR(50) | NOT NULL, REFERENCES DEVICE(device_id) ON DELETE RESTRICT | Thiết bị đo |
 | `timestamp` | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | Thời điểm đo đạc |
 | `lux` | NUMERIC(8,2) | NOT NULL | Cường độ ánh sáng (Lux) |
 | `motion` | BOOLEAN | NOT NULL DEFAULT FALSE | Trạng thái chuyển động |
@@ -129,10 +129,10 @@ Với mỗi bảng dưới đây:
 | `pwm` | SMALLINT | NOT NULL, CHECK (pwm >= 0 AND pwm <= 100) | Thang đo phần trăm PWM (0–100%) |
 
 - **Primary key:** `telemetry_id`
-- **Foreign keys:** `device_id` → `DEVICE.device_id` (ON DELETE CASCADE — chỉ áp dụng khi xóa dữ liệu test trong môi trường dev).
+- **Foreign keys:** `device_id` → `DEVICE.device_id` (**ON DELETE RESTRICT** — nhất quán với `COMMAND`/`ALERT`: không cho phép hard-delete Device khi còn dữ liệu telemetry. Dọn dữ liệu test/dev dùng script tường minh xóa `TELEMETRY` trước, sau đó mới xử lý `DEVICE`).
 - **Relationships:** thuộc về 1 `DEVICE`
 - **Constraints & Indexes: [ĐÃ BỔ SUNG]** CHECK constraint `pwm BETWEEN 0 AND 100`. Index tăng tốc truy vấn lịch sử: `CREATE INDEX idx_telemetry_device_timestamp ON TELEMETRY (device_id, timestamp DESC);`.
-  - *Lý do/Rationale:* Thang đo PWM phần trăm (0–100%) đồng nhất với Web UI và Adaptive rule; Index kép `(device_id, timestamp DESC)` bắt buộc phải có để truy vấn biểu đồ thời gian thực không bị chậm khi số lượng bản ghi telemetry tăng nhanh (mỗi 5s một bản tin).
+  - *Lý do/Rationale:* Thang đo PWM phần trăm (0–100%) đồng nhất với Web UI và Adaptive rule; Index kép `(device_id, timestamp DESC)` bắt buộc phải có để truy vấn biểu đồ thời gian thực không bị chậm khi số lượng bản ghi telemetry tăng nhanh (mỗi 5s một bản tin). `ON DELETE RESTRICT` bảo vệ toàn vẹn dữ liệu audit giống hai bảng `COMMAND`/`ALERT`.
 
 ## 8. COMMAND
 
@@ -205,11 +205,6 @@ Với mỗi bảng dưới đây:
 - **Relationships:** thuộc về 1 `USER` và (tùy chọn) 1 `DEVICE`
 - **Constraints & Indexes: [ĐÃ BỔ SUNG]** `device_id` và `user_id` là optional (cho phép NULL để phục vụ thao tác hệ thống hoặc khi user/device bị xoá nhưng audit log vẫn được bảo lưu). Index: `CREATE INDEX idx_audit_created_at ON AUDIT_LOG (created_at DESC);`.
   - *Lý do/Rationale:* Thiết kế khóa ngoại `ON DELETE SET NULL` là nguyên tắc bắt buộc cho bảng Audit để không bao giờ bị mất dấu vết thao tác lịch sử.
-
-- **Primary key:** `log_id`
-- **Foreign keys:** `user_id` → `USER.user_id`; `device_id` → `DEVICE.device_id`
-- **Relationships:** thuộc về 1 `USER` và (tùy chọn) 1 `DEVICE`
-- **Constraints:** TODO/UNDEFINED (liệu `device_id` có bắt buộc NOT NULL hay optional — chưa xác định)
 
 ## 11. Relationships (tổng hợp)
 
@@ -314,4 +309,4 @@ erDiagram
     }
 ```
 
-> **[ĐÃ BỔ SUNG]** Toàn bộ data type SQL cụ thể, thang đo PWM ($0 - 100\%$), index hiệu năng, cascade behavior (`ON DELETE RESTRICT` cho `COMMAND`/`ALERT` để bảo vệ dữ liệu audit, `ON DELETE SET NULL` cho User, soft-delete qua `DECOMMISSIONED` cho Device) và các ràng buộc (CHECK, NOT NULL, UNIQUE) của 7 bảng đã được chuẩn hóa chi tiết ở trên để sẵn sàng viết file migration cho PostgreSQL 18. Không tự ý thêm bất kỳ bảng nào ngoài 7 entity này.
+> **[ĐÃ BỔ SUNG]** Toàn bộ data type SQL cụ thể, thang đo PWM ($0 - 100\%$), index hiệu năng, cascade behavior (`ON DELETE RESTRICT` cho cả `TELEMETRY`/`COMMAND`/`ALERT` để bảo vệ dữ liệu audit — nhất quán một chính sách duy nhất, `ON DELETE SET NULL` cho User, soft-delete qua `DECOMMISSIONED` cho Device) và các ràng buộc (CHECK, NOT NULL, UNIQUE) của 7 bảng đã được chuẩn hóa chi tiết ở trên để sẵn sàng viết file migration cho PostgreSQL 18. Không tự ý thêm bất kỳ bảng nào ngoài 7 entity này.
