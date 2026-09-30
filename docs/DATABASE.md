@@ -71,14 +71,14 @@ Với mỗi bảng dưới đây:
 | `email` | VARCHAR(100) | NOT NULL, UNIQUE | Email người dùng |
 | `password_hash` | VARCHAR(255) | NOT NULL | Mật khẩu băm (bcryptjs) |
 | `role_id` | INT | NOT NULL, REFERENCES ROLE(role_id) ON DELETE RESTRICT | Khóa ngoại vai trò |
-| `status` | VARCHAR(20) | NOT NULL DEFAULT 'ACTIVE', CHECK (status IN ('ACTIVE', 'LOCKED', 'INACTIVE')) | Trạng thái tài khoản |
+| `status` | VARCHAR(20) | NOT NULL DEFAULT 'ACTIVE', CHECK (status IN ('ACTIVE', 'LOCKED')) | Trạng thái tài khoản: `ACTIVE` (đăng nhập/sử dụng bình thường), `LOCKED` (bị khóa, không được đăng nhập) |
 | `created_at` | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | Thời điểm tạo |
 | `updated_at` | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | Thời điểm cập nhật |
 
 - **Primary key:** `user_id`
 - **Foreign keys:** `role_id` → `ROLE.role_id` (ON DELETE RESTRICT — không cho phép xóa role khi vẫn còn user gắn với role).
 - **Relationships:** `USER → DEVICE` (1:N, qua `assigned_user_id`), `USER → COMMAND` (1:N), `USER → ALERT` (1:N, qua `acknowledged_by`/`resolved_by`), `USER → AUDIT_LOG` (1:N)
-- **Constraints: [ĐÃ BỔ SUNG]** `UNIQUE(username)`, `UNIQUE(email)`, CHECK constraint cho `status`.
+- **Constraints: [ĐÃ BỔ SUNG]** `UNIQUE(username)`, `UNIQUE(email)`, CHECK constraint cho `status` (chỉ `ACTIVE`/`LOCKED`, khớp với `PATCH /users/:id/status` trong `API_SPEC.md`).
   - *Lý do/Rationale:* Cần thiết để lập trình tầng ORM/Repository và validate dữ liệu khi đăng ký/đăng nhập. Độ dài `password_hash` 255 ký tự đảm bảo lưu trọn vẹn chuỗi băm chuẩn bcrypt.
 
 ## 6. DEVICE
@@ -146,17 +146,26 @@ Với mỗi bảng dưới đây:
 | `device_id` | VARCHAR(50) | NOT NULL, REFERENCES DEVICE(device_id) ON DELETE RESTRICT | Thiết bị nhận lệnh |
 | `user_id` | UUID | NULL, REFERENCES USER(user_id) ON DELETE SET NULL | Người gửi lệnh |
 | `command_type` | VARCHAR(20) | NOT NULL, CHECK (command_type IN ('PWM', 'ON', 'OFF')) | Loại lệnh |
-| `command_value` | NUMERIC(5,2) | NULL | Giá trị đính kèm (PWM 0–100%) |
-| `status` | VARCHAR(25) | NOT NULL DEFAULT 'PENDING', CHECK (status IN ('PENDING', 'SENT', 'ACKNOWLEDGED', 'TIMEOUT', 'FAILED')) | Trạng thái lệnh |
-| `sent_at` | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | Thời điểm gửi lệnh |
+| `command_value` | SMALLINT | NULL, CHECK (command_value BETWEEN 0 AND 100) | Giá trị PWM theo phần trăm (số nguyên 0–100); bắt buộc khi `command_type = 'PWM'`, phải NULL khi `ON`/`OFF` (xem constraint liên trường bên dưới) |
+| `status` | VARCHAR(25) | NOT NULL DEFAULT 'PENDING', CHECK (status IN ('PENDING', 'SENT', 'ACKNOWLEDGED', 'TIMEOUT', 'FAILED')) | Trạng thái lệnh (luồng chuyển trạng thái: xem `API_SPEC.md` mục B.6) |
+| `sent_at` | TIMESTAMPTZ | NOT NULL DEFAULT CURRENT_TIMESTAMP | Thời điểm lệnh được tạo/publish lần đầu (không đổi khi retry) |
 | `ack_at` | TIMESTAMPTZ | NULL | Thời điểm nhận ACK |
-| `result` | VARCHAR(50) | NULL | Kết quả thực thi |
+| `result` | VARCHAR(50) | NULL | Kết quả thực thi (giá trị `result` trong ACK, ví dụ `PWM_SET`, `COMMAND_EXPIRED`) |
 
 - **Primary key:** `command_id`
 - **Foreign keys:** `device_id` → `DEVICE.device_id` (**ON DELETE RESTRICT** — ngăn chặn việc xóa cứng thiết bị khi đã có lệnh điều khiển trong quá khứ); `user_id` → `USER.user_id` (ON DELETE SET NULL).
 - **Relationships:** thuộc về 1 `DEVICE` và 1 `USER`
 - **Constraints & Indexes: [ĐÃ BỔ SUNG]** CHECK ràng buộc `command_type` ('PWM', 'ON', 'OFF'), `status` ('PENDING', 'SENT', 'ACKNOWLEDGED', 'TIMEOUT', 'FAILED'). Index: `CREATE INDEX idx_command_device ON COMMAND (device_id, sent_at DESC);`.
-  - *Lý do/Rationale:* Ràng buộc `ON DELETE RESTRICT` bảo vệ dữ liệu audit của hệ thống, cấm xóa cứng thiết bị khi đã vận hành; Index phục vụ API tra cứu lịch sử command của thiết bị.
+  - **CHECK liên trường** giữa `command_type` và `command_value`:
+    ```sql
+    CHECK (
+      (command_type = 'PWM' AND command_value IS NOT NULL AND command_value BETWEEN 0 AND 100)
+      OR
+      (command_type IN ('ON', 'OFF') AND command_value IS NULL)
+    )
+    ```
+    Lưu ý: phải có `command_value IS NOT NULL` tường minh ở nhánh `PWM`, vì trong PostgreSQL một CHECK cho kết quả NULL (unknown) vẫn được chấp nhận — nếu thiếu, lệnh `PWM` với `command_value = NULL` sẽ lọt qua constraint.
+  - *Lý do/Rationale:* Ràng buộc `ON DELETE RESTRICT` bảo vệ dữ liệu audit của hệ thống, cấm xóa cứng thiết bị khi đã vận hành; Index phục vụ tra cứu lịch sử command của thiết bị (chưa có endpoint REST công khai cho việc này — xem `API_SPEC.md`). `command_value` dùng `SMALLINT` thống nhất với `TELEMETRY.pwm`; cả hai cùng thang phần trăm nên không cần bước quy đổi.
 
 ## 9. ALERT
 
@@ -168,7 +177,7 @@ Với mỗi bảng dưới đây:
 |---|---|---|---|
 | `alert_id` | UUID | PRIMARY KEY DEFAULT gen_random_uuid() | Khóa chính UUID |
 | `device_id` | VARCHAR(50) | NOT NULL, REFERENCES DEVICE(device_id) ON DELETE RESTRICT | Thiết bị phát sinh cảnh báo |
-| `alert_type` | VARCHAR(30) | NOT NULL, CHECK (alert_type IN ('LAMP_FAULT', 'DEVICE_OFFLINE', 'SENSOR_ERROR')) | Loại cảnh báo |
+| `alert_type` | VARCHAR(30) | NOT NULL, CHECK (alert_type IN ('LAMP_FAULT', 'DEVICE_OFFLINE')) | Loại cảnh báo (chỉ hai loại có logic phát hiện trong phạm vi hiện tại) |
 | `severity` | VARCHAR(20) | NOT NULL DEFAULT 'MEDIUM', CHECK (severity IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')) | Mức độ nghiêm trọng |
 | `message` | TEXT | NOT NULL | Nội dung cảnh báo |
 | `status` | VARCHAR(20) | NOT NULL DEFAULT 'NEW', CHECK (status IN ('NEW', 'ACKNOWLEDGED', 'RESOLVED')) | Trạng thái xử lý |

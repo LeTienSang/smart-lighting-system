@@ -77,6 +77,9 @@
 - Audit logs: các thao tác quan trọng phải được ghi vào `AUDIT_LOG`.
 - HTTPS/TLS: sử dụng khi phù hợp với môi trường triển khai thực tế (báo cáo gốc ghi đây là điều "cân nhắc" cho môi trường thật, chưa phải yêu cầu bắt buộc ở giai đoạn prototype — xem `ARCHITECTURE.md` mục 9 và Hướng phát triển).
 - **Không được tự tuyên bố** rằng một cơ chế bảo mật đã được triển khai (ví dụ "hệ thống đã có HTTPS/TLS") nếu code thực tế chưa có — phải phản ánh đúng trạng thái implementation thực tế.
+- **[ĐÃ BỔ SUNG] Chi tiết JWT:** Thuật toán ký **`HS256`**; secret lấy từ biến môi trường `JWT_SECRET`; claims gồm `{ sub: user_id, role, iat, exp }`. Access Token hết hạn sau `JWT_EXPIRES_IN` giây (mặc định 900s = 15 phút); Refresh Token hết hạn sau `REFRESH_TOKEN_EXPIRES_IN` (mặc định 7 ngày). Đây là quyết định của dự án, không phải giá trị mặc định của thư viện.
+- **[ĐÃ BỔ SUNG] bcrypt cost factor:** Cost factor `= 10` là giá trị chuẩn của project cho Phase 1, áp dụng nhất quán cho cả `password_hash` (User) lẫn băm `device_key` (Device). Đây là quyết định tường minh của dự án — không tự thay đổi khi implement mà không có xác nhận của nhóm.
+- **[ĐÃ BỔ SUNG] Socket.IO authentication:** Chỉ chấp nhận kết nối từ client đã xác thực (có JWT access token hợp lệ). Cơ chế xác thực cụ thể (middleware handshake, truyền token...) là chi tiết implementation — xem `API_SPEC.md` mục C.3.
 
 ## 9. Git Rules
 

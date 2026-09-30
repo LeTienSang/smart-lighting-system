@@ -70,7 +70,7 @@ Phạm vi hiện tại **không bao gồm** (giữ nguyên theo báo cáo gốc 
 | FR-005 | Hệ thống phải cho phép Admin quản lý vòng đời thiết bị (lifecycle). |
 | FR-006 | Hệ thống phải cho phép Admin, Operator, Viewer giám sát trạng thái thiết bị. |
 | FR-007 | Hệ thống phải cung cấp Dashboard cho Admin, Operator, Viewer. |
-| FR-008 | Hệ thống phải cho phép xem lịch sử dữ liệu và hoạt động (Admin, Operator, Viewer). |
+| FR-008 | Hệ thống phải cho phép xem lịch sử dữ liệu telemetry và danh sách cảnh báo (Admin, Operator, Viewer); nhật ký hoạt động hệ thống (Audit Log) chỉ dành cho Admin. |
 | FR-009 | Hệ thống phải cho phép Admin và Operator điều khiển đèn (bật/tắt, PWM). |
 | FR-010 | Hệ thống (ESP32) phải tự động thực hiện Adaptive Lighting dựa trên Lux và chuyển động. |
 | FR-011 | Hệ thống phải cho phép Admin cấu hình các ngưỡng của Adaptive Lighting. |
@@ -91,7 +91,7 @@ Phạm vi hiện tại **không bao gồm** (giữ nguyên theo báo cáo gốc 
 | UC05 | Quản lý vòng đời thiết bị | Admin |
 | UC06 | Giám sát trạng thái thiết bị | Admin, Operator, Viewer |
 | UC07 | Xem Dashboard | Admin, Operator, Viewer |
-| UC08 | Xem lịch sử dữ liệu và hoạt động | Admin, Operator, Viewer |
+| UC08 | Xem lịch sử dữ liệu và cảnh báo (Audit Log: chỉ Admin) | Admin, Operator, Viewer |
 | UC09 | Điều khiển đèn | Admin, Operator |
 | UC10 | Adaptive Lighting | System / ESP32 |
 | UC11 | Cấu hình Adaptive Lighting | Admin |
@@ -146,25 +146,28 @@ Phạm vi hiện tại **không bao gồm** (giữ nguyên theo báo cáo gốc 
 - **Expected behavior:** UNDEFINED (nội dung dashboard chi tiết chưa được báo cáo xác định)
 - **Permission:** Tất cả vai trò.
 
-### UC08 — Xem lịch sử dữ liệu và hoạt động
-- **Actor:** Admin, Operator, Viewer
-- **Description:** Người dùng xem lịch sử telemetry và hoạt động của hệ thống.
+### UC08 — Xem lịch sử dữ liệu và cảnh báo
+- **Actor:** Admin, Operator, Viewer (Audit Log: chỉ Admin)
+- **Description:** Người dùng xem lịch sử telemetry của thiết bị và danh sách cảnh báo. Riêng nhật ký hoạt động hệ thống (Audit Log) chỉ Admin được xem.
 - **Preconditions:** UNDEFINED
-- **Expected behavior:** UNDEFINED
-- **Permission:** Tất cả vai trò.
+- **Expected behavior:**
+  - Admin, Operator, Viewer: xem lịch sử telemetry (`GET /devices/:id/telemetry`) và danh sách cảnh báo (`GET /alerts`).
+  - Chỉ Admin: xem Audit Log (`GET /audit-logs`).
+  - Lịch sử lệnh điều khiển (command history): **TODO** — hiện chưa có endpoint REST tương ứng trong `API_SPEC.md`; không tự thêm khi chưa được xác nhận.
+- **Permission:** Telemetry và cảnh báo: tất cả vai trò. Audit Log: chỉ Admin.
 
 ### UC09 — Điều khiển đèn
 - **Actor:** Admin, Operator
 - **Description:** Người dùng gửi lệnh điều khiển đèn (ON/OFF/PWM) từ giao diện Web.
 - **Preconditions:** UNDEFINED
-- **Expected behavior:** Lệnh được gửi qua MQTT tới ESP32, ESP32 phản hồi ACK.
+- **Expected behavior:** Lệnh được gửi qua MQTT tới ESP32, ESP32 phản hồi ACK. Lệnh thủ công tạm thời ghi đè Adaptive Lighting (quy tắc chi tiết: `ARCHITECTURE.md` mục 7).
 - **Permission:** Admin, Operator (Viewer **không** có quyền này — xem Business Rules).
 
 ### UC10 — Adaptive Lighting
 - **Actor:** System / ESP32
 - **Description:** Hệ thống (ESP32) tự động điều chỉnh độ sáng LED dựa trên Lux và chuyển động, theo ngưỡng lưu trong `adaptive_config`.
 - **Preconditions:** UNDEFINED
-- **Expected behavior:** Xem bảng ngưỡng PWM tham khảo trong `ARCHITECTURE.md` mục Adaptive Lighting.
+- **Expected behavior:** Xem bảng ngưỡng PWM tham khảo và quy tắc ghi đè bởi lệnh thủ công trong `ARCHITECTURE.md` mục Adaptive Lighting.
 - **Permission:** Đây là chức năng tự động của hệ thống; người dùng **không có quyền** cấu hình rule trực tiếp trong UC10 (chỉ cấu hình qua UC11).
 
 ### UC11 — Cấu hình Adaptive Lighting
@@ -192,8 +195,9 @@ Phạm vi hiện tại **không bao gồm** (giữ nguyên theo báo cáo gốc 
 - Cảnh báo `LAMP_FAULT` được tạo khi điều kiện lỗi thỏa mãn: **[ĐÃ BỔ SUNG]** Khi mức PWM yêu cầu $\ge 30\%$ nhưng dòng điện tiêu thụ đo được từ INA219 thấp hơn ngưỡng $I < 0.05\text{A}$ ($50\text{mA}$) duy trì liên tục trong thời gian $T \ge 5\text{ giây}$.
   - *Lý do/Rationale:* Khi PWM ở mức thấp (0–20% theo bảng Adaptive Lighting khi không có người), dòng tải LED rất nhỏ dễ gây báo động giả (false positive); quy định chỉ kiểm tra lỗi khi $PWM \ge 30\%$ đảm bảo đèn đang trong trạng thái tải sáng rõ rệt. Khoảng thời gian $5\text{s}$ giúp lọc nhiễu và bỏ qua hiện tượng quá độ (transient/inrush) khi vừa bật hoặc chuyển mức độ sáng.
 - Chỉ Admin được: quản lý User, onboarding Device, quản lý vòng đời Device, cấu hình Adaptive Lighting.
-- Admin và Operator đều được: giám sát Device, xem Dashboard, xem lịch sử dữ liệu/hoạt động, điều khiển đèn, xử lý cảnh báo.
-- Viewer chỉ được: đăng nhập/đăng xuất, đổi mật khẩu, giám sát Device, xem Dashboard, xem lịch sử dữ liệu/hoạt động.
+- Admin và Operator đều được: giám sát Device, xem Dashboard, xem lịch sử telemetry và cảnh báo, điều khiển đèn, xử lý cảnh báo.
+- Viewer chỉ được: đăng nhập/đăng xuất, đổi mật khẩu, giám sát Device, xem Dashboard, xem lịch sử telemetry và cảnh báo.
+- Chỉ Admin được xem Audit Log (`GET /audit-logs`).
 - Backend kiểm tra RBAC tại API, không chỉ ẩn nút trên giao diện.
 - Thiết bị bị khóa/revoke/decommission không được tiếp tục hoạt động hợp lệ trên hệ thống.
 

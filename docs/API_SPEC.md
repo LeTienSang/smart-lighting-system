@@ -177,7 +177,7 @@ Quy ước chung: "Quyền" (Authorization) lấy theo bảng mục 3.3.3 của 
 - **Authentication:** Authenticated
 - **Authorization:** Admin
 - **Purpose:** Khóa/mở User
-- **Request: [ĐÃ BỔ SUNG]**
+- **Request: [ĐÃ BỔ SUNG]** (`status` chỉ nhận `ACTIVE` hoặc `LOCKED`)
   ```json
   {
     "status": "LOCKED"
@@ -191,7 +191,7 @@ Quy ước chung: "Quyền" (Authorization) lấy theo bảng mục 3.3.3 của 
     "updated_at": "2026-09-26T08:36:00Z"
   }
   ```
-- **Error cases: [ĐÃ BỔ SUNG]** `400 Bad Request` (status không hợp lệ), `404 Not Found`.
+- **Error cases: [ĐÃ BỔ SUNG]** `400 Bad Request` (status không phải `ACTIVE`/`LOCKED`), `404 Not Found`.
 - *Lý do/Rationale:* Cần thiết để lập trình nút bấm khóa/mở tài khoản trên UI.
 
 ### A.3 Devices
@@ -431,7 +431,7 @@ Quy ước chung: "Quyền" (Authorization) lấy theo bảng mục 3.3.3 của 
 - **Authentication:** Authenticated
 - **Authorization:** Admin/Operator (Viewer bị từ chối)
 - **Purpose:** Điều khiển thiết bị (gửi command, ví dụ ON/OFF/PWM)
-- **Request: [ĐÃ BỔ SUNG]** (Thang đo `command_value`: phần trăm 0–100%)
+- **Request: [ĐÃ BỔ SUNG]** (`command_value`: **số nguyên** phần trăm 0–100, bắt buộc khi `command_type = "PWM"`; phải bỏ trống/`null` khi `ON`/`OFF`)
   ```json
   {
     "command_type": "PWM",
@@ -450,11 +450,11 @@ Quy ước chung: "Quyền" (Authorization) lấy theo bảng mục 3.3.3 của 
   }
   ```
 - **Error cases: [ĐÃ BỔ SUNG]**
-  - `400 Bad Request`: `command_type` không hợp lệ (chỉ nhận `PWM`, `ON`, `OFF`) hoặc `command_value` ngoài dải 0–100.
+  - `400 Bad Request`: `command_type` không hợp lệ (chỉ nhận `PWM`, `ON`, `OFF`); `command_value` không phải số nguyên trong dải 0–100; thiếu `command_value` khi `PWM`; hoặc có `command_value` khi `ON`/`OFF`.
   - `403 Forbidden`: Người dùng vai trò `Viewer` gọi endpoint này bị từ chối (theo TC09).
   - `404 Not Found`: Không tìm thấy thiết bị.
   - `409 Conflict`: Thiết bị đang `OFFLINE` hoặc `MAINTENANCE`.
-- *Lý do/Rationale:* Cần thiết để lập trình bảng điều khiển slider PWM và công tắc bật/tắt đèn trên Web UI. Mã HTTP `202 Accepted` phản ánh đúng tính chất bất đồng bộ của lệnh MQTT IoT.
+- *Lý do/Rationale:* Cần thiết để lập trình bảng điều khiển slider PWM và công tắc bật/tắt đèn trên Web UI. Mã HTTP `202 Accepted` phản ánh đúng tính chất bất đồng bộ của lệnh MQTT IoT: kết quả cuối (`ACKNOWLEDGED`/`FAILED`/`TIMEOUT`) được cập nhật sau vào `COMMAND.status` theo `B.6`. Hiện chưa có endpoint REST để tra cứu trạng thái/lịch sử lệnh: **TODO/UNDEFINED** (không tự thêm khi chưa được xác nhận).
 
 ### A.6 Alerts
 
@@ -616,6 +616,8 @@ Quy ước chung: "Quyền" (Authorization) lấy theo bảng mục 3.3.3 của 
 | `iot/device/{device_id}/ack` | ESP32 → Backend | ACK phản hồi lệnh |
 | `iot/device/{device_id}/config` | Backend → ESP32 | Cấu hình (Adaptive Lighting) |
 
+> Chỉ có 5 topic trên. Cảnh báo (alert) **không** có topic MQTT riêng — xem `ARCHITECTURE.md` mục 6.3.
+
 ### B.2 Chi tiết từng topic
 
 #### `iot/device/{device_id}/telemetry`
@@ -725,11 +727,24 @@ Các field đã xác định (theo ví dụ trong báo cáo gốc, mục 3.2.2):
 | Field | Mô tả |
 |---|---|
 | `command_id` | UUID định danh lệnh |
-| `command_type` | Loại lệnh: **[ĐÃ BỔ SUNG]** `"PWM"` (chỉnh độ sáng cụ thể), `"ON"` (bật đèn theo mức trước đó hoặc 100%), `"OFF"` (tắt đèn, PWM = 0) |
-| `command_value` | Giá trị đi kèm lệnh: **[ĐÃ BỔ SUNG]** Thang đo **phần trăm ($0 - 100\%$)** khi loại lệnh là `PWM` (NULL nếu là `ON`/`OFF`) |
+| `command_type` | Loại lệnh: **[ĐÃ BỔ SUNG]** `"PWM"` (đặt độ sáng cụ thể), `"ON"` (bật đèn — ngữ nghĩa bên dưới), `"OFF"` (tắt đèn, PWM = 0) |
+| `command_value` | Giá trị đi kèm lệnh: **[ĐÃ BỔ SUNG]** số nguyên theo thang **phần trăm ($0 - 100\%$)** khi loại lệnh là `PWM`; `null` nếu là `ON`/`OFF` |
 | `timestamp` | Thời điểm gửi lệnh (ISO 8601 UTC, dùng để kiểm tra hết hạn tin nhắn ở tầng ứng dụng) |
 
 > *Lý do/Rationale:* Thang đo PWM phần trăm ($0 - 100\%$) và danh sách 3 lệnh chuẩn (`PWM`, `ON`, `OFF`) là bắt buộc phải có để switch-case trong code firmware C++ và validate body ở backend.
+
+**Ngữ nghĩa lệnh (hành vi trên ESP32) — [ĐÃ BỔ SUNG]:**
+
+| Lệnh | Hành vi | Ảnh hưởng `last_manual_pwm` |
+|---|---|---|
+| `PWM`, giá trị > 0 | Đặt PWM = `command_value` | Cập nhật = `command_value` |
+| `PWM`, giá trị = 0 | Đặt PWM = 0 | Không cập nhật |
+| `OFF` | Đặt PWM = 0 | Không cập nhật |
+| `ON` | Đặt PWM = `last_manual_pwm`; nếu chưa có (chưa từng có lệnh `PWM` > 0 kể từ lần khởi động) thì đặt **100** | Không cập nhật |
+
+- `last_manual_pwm` là biến RAM của ESP32, chỉ ghi nhận mức khác 0 do **lệnh thủ công** đặt; mức do Adaptive Lighting đặt không được ghi nhận. Mất khi ESP32 khởi động lại (khi đó `ON` → 100).
+- Mọi lệnh thủ công được thực thi thành công đều bật `manual_override` — quy tắc ghi đè Adaptive Lighting: `ARCHITECTURE.md` mục 7.2.
+- Ví dụ: `PWM 70` → `OFF` → `ON` ⇒ 70%. Adaptive đang đặt 10% → `OFF` → `ON` ⇒ 100% (không phải 10%).
 
 ### B.5 ACK Payload
 
@@ -750,6 +765,15 @@ Các field đã xác định (theo ví dụ trong báo cáo gốc, mục 3.2.2):
 | `result` | Kết quả thực thi (ví dụ: `PWM_SET`, `TURNED_ON`, `TURNED_OFF`, `COMMAND_EXPIRED`) |
 
 > *Lý do/Rationale:* Cần thiết để Backend cập nhật cột `status` và `result` trong bảng `COMMAND` và gửi Socket.IO tới client.
+
+**Ánh xạ ACK → `COMMAND.status` [ĐÃ BỔ SUNG]:**
+
+| Điều kiện | `COMMAND.status` |
+|---|---|
+| ACK `status = "ACKNOWLEDGED"` | `ACKNOWLEDGED` |
+| ACK `status = "REJECTED"` (gồm `COMMAND_EXPIRED`) hoặc `"EXECUTION_FAILED"` | `FAILED` (lý do lưu ở `COMMAND.result`) |
+| Không có ACK sau khi hết các lần retry | `TIMEOUT` |
+| Publish MQTT thất bại (không gửi được lệnh) | `FAILED` |
 
 ### B.6 Các thông số vận hành MQTT đã chuẩn hóa: [ĐÃ BỔ SUNG]
 
@@ -776,9 +800,25 @@ Toàn bộ thông số vận hành giao thức MQTT giữa Backend và ESP32 đ�
     - Payload: `{"device_id":"LIGHT-001","status":"OFFLINE","timestamp":"..."}`
     - QoS: 1
   - *Lý do/Rationale:* LWT retain giúp broker tự động thông báo ngay lập tức trạng thái OFFLINE cho Backend khi kết nối TCP của ESP32 bị đứt đột ngột.
-- **Retry policy:** Nếu Backend không nhận được ACK trong 5000ms (5 giây), Backend thử lại tối đa 2 lần (mỗi lần cách nhau 1000ms có exponential backoff). Sau 2 lần thử lại thất bại, đánh dấu trạng thái lệnh là `TIMEOUT` hoặc `FAILED`.
-  - *Lý do/Rationale:* Tránh Backend bị treo request vĩnh viễn và phản hồi kịp thời cho giao diện Web.
+- **Retry policy [ĐÃ BỔ SUNG]:** mỗi lần gửi chờ ACK tối đa 5 giây; tối đa 2 lần retry, dùng **cùng `command_id`** ở mọi lần gửi (không tạo `command_id` mới):
+  ```text
+  Publish lần đầu (PENDING → SENT)
+      ↓ chờ ACK 5s
+      ↓ chưa có ACK → nghỉ 1s
+  Retry #1 (cùng command_id, vẫn SENT)
+      ↓ chờ ACK 5s
+      ↓ chưa có ACK → nghỉ 2s
+  Retry #2 (cùng command_id, vẫn SENT)
+      ↓ chờ ACK 5s
+      ↓ chưa có ACK
+  TIMEOUT
+  ```
+  Tổng thời gian tối đa khoảng 18 giây. Khoảng nghỉ 1s → 2s là backoff theo cấp số nhân.
+  - **Luồng trạng thái `COMMAND.status`:** `PENDING` (REST vừa tạo lệnh, trả `202`) → `SENT` (publish MQTT thành công; retry vẫn là `SENT`) → `ACKNOWLEDGED` / `FAILED` / `TIMEOUT` theo bảng ánh xạ ở mục B.5. Nếu publish MQTT thất bại ngay từ đầu: `PENDING` → `FAILED`.
+  - *Lý do/Rationale:* Tránh Backend treo vô hạn và phản hồi kịp thời cho giao diện Web; REST trả `202` ngay nên việc chờ/retry không chặn request. Tổng thời gian retry (~18s) nhỏ hơn ngưỡng hết hạn lệnh 60s nên lệnh đang retry không bị từ chối vì `COMMAND_EXPIRED`; retry cùng `command_id` kết hợp deduplication (bên dưới) giữ cho lệnh idempotent.
 - **Timeout phát hiện Offline:** Heartbeat được ESP32 gửi định kỳ mỗi 10 giây. Nếu sau 30 giây (3 chu kỳ heartbeat liên tiếp) Backend không nhận được bất kỳ bản tin heartbeat hoặc telemetry nào từ thiết bị, Backend tự động cập nhật `device_status = 'OFFLINE'` và sinh bản ghi cảnh báo `DEVICE_OFFLINE`.
   - *Lý do/Rationale:* Cần thiết để backend duy trì tiến trình kiểm tra liveness và phát hiện thiết bị mất nguồn.
-- **Xử lý bản tin trùng (Deduplication):** ESP32 và Backend duy trì danh sách FIFO / LRU cache lưu trữ 50 `command_id` gần nhất trong vòng 60 giây. Nếu một bản tin `command_id` đã có trong cache được nhận lại (do cơ chế QoS 1 retry của MQTT broker), hệ thống bỏ qua việc kích hoạt lại tải LED và chỉ gửi lại bản tin ACK xác nhận trạng thái hiện tại.
-  - *Lý do/Rationale:* QoS 1 đảm bảo "at-least-once" nên có khả năng gây trùng bản tin khi mạng chập chờn; bộ đệm deduplication đảm bảo tính idempotent của lệnh điều khiển.
+- **Xử lý bản tin trùng (Deduplication) [ĐÃ BỔ SUNG]:** ESP32 và Backend duy trì danh sách FIFO/LRU cache lưu 50 `command_id` gần nhất trong vòng 60 giây, **kèm ACK đã tạo cho từng `command_id`**. Nếu nhận lại một `command_id` đã có trong cache (do QoS 1 giao lại hoặc do retry của Backend), hệ thống **không** thực thi lại và **không** kiểm tra hết hạn lại, mà phát lại đúng ACK cũ.
+  - **Thứ tự xử lý lệnh trên ESP32:** dedup → kiểm tra hợp lệ → kiểm tra hết hạn → thực thi → cập nhật PWM → bật `manual_override` → gửi ACK (chi tiết: `ARCHITECTURE.md` mục 7.2).
+  - *Lý do/Rationale:* QoS 1 đảm bảo "at-least-once" nên có thể gây trùng bản tin khi mạng chập chờn; dedup đứng đầu và phát lại ACK cũ để bản trùng đến muộn không bị từ chối nhầm là `COMMAND_EXPIRED`, đảm bảo tính idempotent của lệnh điều khiển.
+- **Lưu ý chung:** các con số ở mục B.6 (5s, 1s/2s, 30s, 50 `command_id`/60s...) là **giá trị đề xuất ban đầu để bắt đầu code**, cần hiệu chỉnh sau khi đo thực tế, không phải số liệu đã kiểm chứng.

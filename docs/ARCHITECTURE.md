@@ -44,7 +44,7 @@ ESP32
 |---|---|
 | MCU | ESP32 |
 | Firmware | C++ / PlatformIO / Arduino Framework |
-| IoT Protocol | MQTT |
+| IoT Protocol | MQTT v3.1.1 |
 | MQTT Broker | Mosquitto |
 | Backend | Node.js 24 LTS / Express 5 / TypeScript |
 | MQTT client (backend) | MQTT.js |
@@ -141,12 +141,13 @@ Web → Backend → MQTT → ESP32 → LED → ACK → Backend → Web
   - *Lý do/Rationale:* Khi PWM ở mức thấp (0–20% theo bảng Adaptive Lighting khi phòng không có người), dòng tải của LED strip rất nhỏ (có thể dưới 50mA) dẫn đến báo động giả nếu kiểm tra ở mọi mức PWM > 0%. Mức $PWM \ge 30\%$ tương ứng trạng thái có người, đèn bật sáng rõ ràng; khoảng thời gian 5s để bỏ qua dao động dòng điện quá độ (transient/inrush) lúc vừa đổi trạng thái PWM.
 - Quy trình xử lý cảnh báo (acknowledge/resolve) sau khi tạo: thực hiện qua API `/alerts/:id/acknowledge` và `/alerts/:id/resolve` — xem `API_SPEC.md`.
 
-Cơ chế retry/timeout/xử lý bản tin trùng cho luồng MQTT: **[ĐÃ BỔ SUNG]**
-- **QoS:** QoS 1 cho command, ACK, config, alert (đảm bảo at-least-once delivery); QoS 0 cho telemetry và heartbeat (tối ưu thông lượng và giảm tải broker).
-- **Command Timeout:** Backend chờ phản hồi ACK tối đa 5000ms (5 giây).
-- **Retry Policy:** Nếu hết timeout 5s mà chưa có ACK, Backend thực hiện retry tối đa 2 lần (thời gian chờ giữa các lần thử lại là 1000ms có exponential backoff). Sau 2 lần thất bại, chuyển trạng thái lệnh sang `TIMEOUT` hoặc `FAILED`.
-- **Xử lý bản tin trùng (Deduplication):** ESP32 và Backend duy trì bộ nhớ đệm (LRU cache / set) lưu danh sách 50 `command_id` trong 60 giây gần nhất. Nếu nhận trùng `command_id` (do broker retry ở QoS 1), hệ thống bỏ qua việc kích hoạt lại phần cứng mà chỉ gửi lại bản tin ACK phản hồi.
-  - *Lý do/Rationale:* Đây là thông số cốt lõi để lập trình logic xử lý bản tin MQTT ở Backend và Firmware. Thiếu các thông số này sẽ không thể viết code gửi lệnh điều khiển tin cậy (command dispatcher) và xử lý ACK.
+Cơ chế QoS/retry/timeout/xử lý bản tin trùng cho luồng MQTT: **[ĐÃ BỔ SUNG]** — **nguồn chính thức của các thông số này là `API_SPEC.md` mục B.6**; phần dưới đây chỉ tóm tắt ở mức kiến trúc để tránh hai nơi lệch nhau.
+- **QoS:** QoS 1 cho `command`, `ack`, `config` và bản tin LWT; QoS 0 cho `telemetry` và heartbeat định kỳ. Cảnh báo (alert) **không** đi qua MQTT — chúng được backend tạo và lưu vào PostgreSQL, Web truy cập qua REST `GET /alerts`; không có topic `alert`. (Việc đẩy cảnh báo realtime qua Socket.IO: **TODO/UNDEFINED**, docs hiện chưa quy định.)
+- **Command dispatch:** REST trả `202 Accepted` ngay, lệnh được xử lý bất đồng bộ. Backend chờ ACK 5 giây mỗi lần, retry tối đa 2 lần (nghỉ 1 giây trước retry #1, 2 giây trước retry #2), mọi lần gửi dùng **cùng `command_id`**. Tổng thời gian tối đa khoảng 18 giây trước khi kết luận `TIMEOUT`.
+- **Trạng thái lệnh:** `PENDING` (vừa tạo) → `SENT` (đã publish MQTT; các lần retry vẫn là `SENT`) → `ACKNOWLEDGED` / `FAILED` / `TIMEOUT`. Ánh xạ từ ACK và điều kiện chi tiết: `API_SPEC.md` mục B.6.
+- **Xử lý bản tin trùng (deduplication):** ESP32 và Backend giữ cache các `command_id` gần đây; nhận trùng thì không thực thi lại mà chỉ phát lại ACK đã tạo trước đó.
+  - *Lý do/Rationale:* QoS 1 chỉ đảm bảo at-least-once nên có thể giao trùng; retry cùng `command_id` kết hợp dedup giúp lệnh idempotent. Tổng thời gian retry (~18s) nhỏ hơn ngưỡng hết hạn lệnh 60s nên lệnh đang retry không bị ESP32 từ chối vì `COMMAND_EXPIRED`.
+- **Giá trị đề xuất — cần hiệu chỉnh lại sau khi đo thực tế**, không phải số liệu đã kiểm chứng từ nhóm.
 
 ## 7. Adaptive Lighting
 
@@ -165,6 +166,31 @@ Adaptive Lighting là logic tự động chạy **trên ESP32**, điều chỉnh
 - Các ngưỡng trên được lưu trong trường `adaptive_config` (kiểu JSONB, trong bảng `DEVICE`).
 - Ngưỡng có thể được thay đổi từ Backend, chỉ bởi **Admin** (qua `PATCH /devices/:id/config`).
 - Không tự thay đổi các giá trị ngưỡng nêu trên khi implement — đây là giá trị tham khảo từ thiết kế gốc, thay đổi thực tế phải qua `adaptive_config`, không hard-code lại trong logic khác.
+
+### 7.1 Chu kỳ đánh giá và trạng thái "có người" **[ĐÃ BỔ SUNG]**
+
+- Adaptive Lighting được đánh giá lại ở **mỗi chu kỳ đọc cảm biến (5 giây)**, cùng nhịp với chu kỳ telemetry.
+- "Có người" là **trạng thái hiệu dụng (effective motion state)**: `true` nếu RCWL-0516 đã phát hiện chuyển động trong vòng `motion_timeout_sec` gần nhất, ngược lại `false`. Đây là trạng thái nội bộ của firmware, không phải một field payload mới; trường `motion` trong telemetry vẫn là kết quả đọc cảm biến theo `API_SPEC.md` mục B.3.
+  - *Lý do/Rationale:* dùng chân RCWL-0516 thô sẽ khiến một xung nhiễu ngắn làm đèn/override đổi trạng thái liên tục; `motion_timeout_sec` đã có sẵn trong `adaptive_config` nên không cần thêm cấu hình.
+
+### 7.2 Lệnh thủ công và Adaptive Lighting (manual override) **[ĐÃ BỔ SUNG]**
+
+Lệnh thủ công (`PWM`, `ON`, `OFF`) **ghi đè** Adaptive Lighting **cho đến khi trạng thái "có người" hiệu dụng thay đổi** (true → false hoặc false → true).
+
+```text
+Adaptive hoạt động
+   ↓ nhận lệnh thủ công PWM/ON/OFF được thực thi thành công
+manual_override = true  → ESP32 giữ mức PWM do lệnh đặt, adaptive không ghi đè
+   ↓ trạng thái "có người" hiệu dụng đổi
+manual_override = false → adaptive tính lại và điều khiển tiếp
+```
+
+- Áp dụng cho cả `OFF`: sau `OFF`, đèn giữ tắt cho tới khi trạng thái "có người" đổi; khi đó adaptive có thể bật lại đèn.
+- `adaptive_config.enabled = false`: adaptive tắt hoàn toàn, lệnh thủ công điều khiển trực tiếp. Khi Admin bật lại `enabled = true`, adaptive tính lại PWM ở chu kỳ đánh giá kế tiếp (không cần chờ lệnh mới).
+- **Thứ tự xử lý một lệnh trên ESP32:** kiểm tra trùng (dedup) → kiểm tra hợp lệ → kiểm tra hết hạn → thực thi → cập nhật PWM hiện tại (và `last_manual_pwm` nếu áp dụng) → bật `manual_override` → gửi ACK. Lệnh bị từ chối hoặc lỗi thực thi **không** bật override.
+  - Dedup đứng đầu để bản trùng do QoS 1 giao lại muộn được trả lại đúng ACK cũ, không bị từ chối nhầm là `COMMAND_EXPIRED`.
+- **`last_manual_pwm`:** biến RAM của ESP32, là mức PWM khác 0 gần nhất được đặt bởi **lệnh thủ công**. Chỉ lệnh `PWM` với giá trị > 0 cập nhật nó; `PWM 0`, `OFF` và mọi mức do Adaptive đặt **không** cập nhật. Mất khi ESP32 khởi động lại. Ngữ nghĩa lệnh `ON` dựa trên biến này: xem `API_SPEC.md` mục B.4.
+- **Giá trị/hành vi đề xuất — cần kiểm chứng lại trên phần cứng thật.** Việc lưu override qua lần khởi động lại (NVS): **TODO/UNDEFINED** (hiện coi override và `last_manual_pwm` là trạng thái RAM).
 
 ## 8. Device Lifecycle
 
